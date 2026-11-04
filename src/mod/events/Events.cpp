@@ -1,5 +1,6 @@
 #include "mod/events/Events.h"
 
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <unordered_map>
@@ -29,8 +30,9 @@ ll::event::ListenerPtr gDieListener;
 // uuid -> 上次备份时间（毫秒）
 std::unordered_map<std::string, int64_t> gLastBackupAt;
 
-int64_t  gLastPurgeDay = 0;
-std::jthread gScheduler;
+int64_t           gLastPurgeDay = 0;
+std::thread       gScheduler;
+std::atomic<bool> gSchedulerStop{false};
 
 void onPlayerJoin(ll::event::player::PlayerJoinEvent& event) {
     auto& player = event.self();
@@ -142,14 +144,18 @@ void unregisterEvents() {
 void startScheduler() {
     stopScheduler();
     gLastPurgeDay = todayStartMs();
-    gScheduler    = std::jthread{[](std::stop_token token) {
+    // 这里刻意不用 std::jthread / std::stop_token：MSVC 的 stop_token 会导入
+    // MSVCP140_ATOMIC_WAIT.dll（C++20 原子等待），而它只随较新的 vcredist 分发，
+    // 老服务器缺这个 DLL 会让模组直接加载失败（错误码 126）。拿 atomic<bool> 顶上。
+    gSchedulerStop.store(false, std::memory_order_relaxed);
+    gScheduler = std::thread{[] {
         // 启用后先跑一轮，顺便补一次过期清理
         ll::thread::ServerThreadExecutor::getDefault().execute(runScheduledWork);
-        while (!token.stop_requested()) {
-            for (int i = 0; i < 10 && !token.stop_requested(); ++i) {
+        while (!gSchedulerStop.load(std::memory_order_relaxed)) {
+            for (int i = 0; i < 10 && !gSchedulerStop.load(std::memory_order_relaxed); ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
             }
-            if (token.stop_requested()) break;
+            if (gSchedulerStop.load(std::memory_order_relaxed)) break;
             ll::thread::ServerThreadExecutor::getDefault().execute(runScheduledWork);
         }
     }};
@@ -157,7 +163,7 @@ void startScheduler() {
 
 void stopScheduler() {
     if (gScheduler.joinable()) {
-        gScheduler.request_stop();
+        gSchedulerStop.store(true, std::memory_order_relaxed);
         gScheduler.join();
     }
 }

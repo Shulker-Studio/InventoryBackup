@@ -2,7 +2,7 @@
   "format_version": 3,
   "format_uuid": "289f771f-2c9a-4d73-9f3f-8492495a924d",
   "tooth": "github.com/Shulker-Studio/InventoryBackup",
-  "version": "26.51.0",
+  "version": "26.51.1",
   "info": {
     "name": "InventoryBackup",
     "description": "玩家背包备份与回档：定时/退出/死亡自动备份、按天归档、在线与离线玩家查包回档、暂存与导入导出",

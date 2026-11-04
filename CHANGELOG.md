@@ -4,7 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-版本号与所适配的 LeviLamina 对齐（`26.51.x`），当前 `26.51.0` 适配 LeviLamina 26.51.9。
+版本号与所适配的 LeviLamina 对齐（`26.51.x`），当前 `26.51.1` 适配 LeviLamina 26.51.9。
+
+## [26.51.1] - 2026-11-05
+
+### Fixed
+
+- 修复部分服务端（vcredist 偏旧）启用时报 `std::system_error` / `[0x0000007E:system]` 无法加载的问题：时区改用 CRT 的 `localtime_s`，定时线程改用 `std::thread` + `std::atomic<bool>`，产物不再依赖 `MSVCP140_ATOMIC_WAIT.dll`，只要 LeviLamina 能启动就能加载
 
 ## [26.51.0] - 2026-11-04
 

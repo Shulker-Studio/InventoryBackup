@@ -1,6 +1,7 @@
 #include "mod/core/Util.h"
 
 #include <chrono>
+#include <ctime>
 #include <format>
 
 namespace ib {
@@ -14,23 +15,49 @@ int64_t nowMs() {
 
 namespace {
 
-std::chrono::zoned_time<std::chrono::system_clock::duration> localTimeOf(int64_t ms) {
-    auto const timePoint = std::chrono::system_clock::time_point{std::chrono::milliseconds{ms}};
-    return std::chrono::zoned_time{std::chrono::current_zone(), timePoint};
+// 用 UCRT 的 localtime_s，而不是 std::chrono::current_zone() / zoned_time：
+// MSVC 的时区库（tzdb）实现在 MSVCP140_ATOMIC_WAIT.dll 里，而那个 DLL 只随较新的
+// vcredist 分发，老服务器上缺它会让模组直接加载失败（错误码 126）。
+// 我们只需要本地时间和日期，走 CRT 就够了。
+std::tm localTm(int64_t ms) {
+    auto const secs = static_cast<std::time_t>(ms / 1000);
+    std::tm    tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &secs);
+#else
+    localtime_r(&secs, &tm);
+#endif
+    return tm;
 }
 
 } // namespace
 
 int64_t todayStartMs() {
-    auto const zoned = localTimeOf(nowMs());
-    auto const day   = std::chrono::floor<std::chrono::days>(zoned.get_local_time());
-    auto const start = std::chrono::zoned_time{zoned.get_time_zone(), std::chrono::local_days{day}};
-    return std::chrono::duration_cast<std::chrono::milliseconds>(start.get_sys_time().time_since_epoch()).count();
+    std::tm day = localTm(nowMs());
+    day.tm_hour = 0;
+    day.tm_min  = 0;
+    day.tm_sec  = 0;
+    day.tm_isdst = -1; // 交给 mktime 判断夏令时
+    return static_cast<int64_t>(std::mktime(&day)) * 1000;
 }
 
-std::string formatTime(int64_t ms) { return std::format("{:%Y-%m-%d %H:%M:%S}", localTimeOf(ms)); }
+std::string formatTime(int64_t ms) {
+    auto const tm = localTm(ms);
+    return std::format(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    );
+}
 
-std::string formatDay(int64_t ms) { return std::format("{:%Y-%m-%d}", localTimeOf(ms)); }
+std::string formatDay(int64_t ms) {
+    auto const tm = localTm(ms);
+    return std::format("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+}
 
 std::string shortUuid(std::string_view uuid) {
     if (uuid.size() <= 8) return std::string{uuid};
