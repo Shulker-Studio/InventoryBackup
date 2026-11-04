@@ -549,3 +549,7 @@ fabric.properties
 # Project specific ignores
 /.idea/
 /bin/
+
+# 本地验证用：服务器数据快照、扫描缓存
+.server-data-backup/
+tools/
