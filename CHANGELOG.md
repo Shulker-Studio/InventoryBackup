@@ -23,7 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **命令**：`/inventorybackup`（别名 `/ib`，GameDirectors 权限），子命令 `online`、`reload`、`export`、`import`、`import confirm`
 - **配置版本化**：`version` 字段驱动的逐版本迁移（当前 v2），迁移前自动留 `config.json.bak`；表单每页条数 `pageSize`（1~50，默认 10）
 - **多语言**：`lang/zh_CN.json`、`lang/en_US.json`，表单文案跟随执行者游戏语言
-- 离线配置迁移自测目标 `config_test`（不链接 LeviLamina，纯逻辑单测）
 
 ### Changed
 

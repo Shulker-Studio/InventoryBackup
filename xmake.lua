@@ -57,17 +57,3 @@ target("InventoryBackup")
             os.cp(file, path.join(outdir, path.filename(file)))
         end
     end)
-
--- 配置迁移的离线自测：只编译纯逻辑，不链接 LeviLamina
--- 跑法：xmake build config_test && ./bin/config_test
-target("config_test")
-    add_packages("nlohmann_json")
-    set_kind("binary")
-    set_languages("c++20")
-    if is_plat("windows") then
-        set_toolchains("clang-cl")
-        add_cxflags("/EHa", "/utf-8", "/W4")
-    end
-    add_files("tests/config_test/main.cpp", "src/mod/config/ConfigMigration.cpp")
-    add_includedirs("src")
-    set_targetdir("bin")

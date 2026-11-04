@@ -76,10 +76,6 @@ jobs:
       - run: |
           cp CHANGELOG.md LICENSE README.md artifact/
 
-      # bin/ 里的自测程序（config_test.exe）不进发布包，发布包只留模组目录
-      - run: |
-          rm -f artifact/config_test.exe
-
       # 产物名必须和 tooth.json 里声明的 asset 文件名一致，否则 lip 安装时会 404
       - run: |
           zip -r ../${{ github.event.repository.name }}-server-windows-x64.zip *
