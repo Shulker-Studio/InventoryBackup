@@ -2,9 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，写法约定见 [DEVELOPMENT.md](DEVELOPMENT.md#更新日志)。
 
-版本号与所适配的 LeviLamina 对齐（`26.60.x`），当前 `26.60.0` 适配 LeviLamina `>=26.60.1 <26.70.0`（Minecraft 26.60.6 服务端）。
+版本号与所适配的 LeviLamina 对齐（`26.60.x`），当前发布版 `26.60.0` 适配 LeviLamina `>=26.60.1 <26.70.0`（Minecraft 26.60.6 服务端）。
+
+## [Unreleased]
+
+目标版本 `26.60.1`：备份、清理、导入导出改为分片 + 后台执行，并修掉玩家列表在老存档上失效的问题。
+
+### Added
+
+- 配置新增五个性能旋钮（`compressLevel`、`tickBudgetMs`、`portChunkSize`、`indexCacheLimit`、`backgroundIo`），配置版本升到 3，老配置启动时自动补齐并回写；README 附通用 / 大服 / 低配三份推荐配置
+
+### Changed
+
+- 备份写盘与导入导出的压缩、读写移到后台线程（`backgroundIo` 可关掉退回同步）；NBT 编解码与索引提交仍在服务端线程，文件落盘后才提交索引
+- 定时备份与过期清理改为按 `tickBudgetMs` 分片执行，一批玩家不再一次性占满整个 tick；调度器改用 LeviLamina 协程，去掉常驻定时线程
+- 导入导出改成边完成边补位，大批量导出的耗时约减半
+- 索引缓存加上限（`indexCacheLimit`），`index.json` 改为紧凑格式，同样内容的体积约减半
+- 界面、命令输出与配置校验错误的文案全部走语言文件并补齐英文；控制台日志走默认语言
+
+### Fixed
+
+- 过期清理启用后不补跑：原来只有跨过本地零点那一刻才触发，零点落在停机时段就等于 `maxKeepDays` 失效；现在启用后会先补一次
+- 过期备份删不掉却算作删除成功，会留下谁也引用不到的文件；现在保留索引条目下次重试
+- 旧存档上「所有玩家」只列出两三个人、导出也只剩他们：读取世界库玩家列表时键名处理错误，一条记录都没认出来
+- 同一账号的多条映射（离线 uuid 与 Xbox uuid）不再被当成两个人：列表与导出按数据键去重（真实存档 1876 条映射 → 952 人）
 
 ## [26.60.0] - 2026-11-05
 
@@ -61,3 +84,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - 真机世界库里有 952 个 `ServerId`，其中 924 个被两个以上 uuid 共用（BDS 的映射不唯一），往这种共享键做离线回档可能同时影响多名玩家，操作前请确认
 - 与旧 JS 插件的导出格式不兼容（旧插件是单个 `data/export_bagdata.json` + base64），LevelDB 存储也不做迁移，新插件从空历史开始
 - 离线玩家的血量 / 位置 / 经验等状态虽然能从同一份实体 NBT 读到，但目前没有对外界面
+
+[Unreleased]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.60.0...HEAD
+[26.60.0]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.51.0...v26.60.0
+[26.51.1]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.51.0...v26.51.1
+[26.51.0]: https://github.com/Shulker-Studio/InventoryBackup/releases/tag/v26.51.0
