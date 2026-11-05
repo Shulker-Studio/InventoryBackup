@@ -4,7 +4,13 @@
 #include <ctime>
 #include <format>
 
+#include "mod/i18n/Text.h"
+
 namespace ib {
+
+std::string msgPrefix() { return msg("backup.common.prefix"); }
+
+std::string formatPath(fs::path const& path) { return path.lexically_normal().generic_string(); }
 
 int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(

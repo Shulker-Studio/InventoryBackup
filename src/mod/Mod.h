@@ -23,7 +23,7 @@ public:
 
     [[nodiscard]] std::filesystem::path configPath() const { return getSelf().getConfigDir() / "config.json"; }
 
-    // 成功返回空串，失败返回给管理员看的原因
+    // 成功返回空串，失败返回 lang key（由调用方 msg 化后再展示）
     std::string reloadConfig();
 
     bool load();

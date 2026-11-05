@@ -39,15 +39,15 @@ void registerCommand() {
     command.overload().text("online").execute([](CommandOrigin const&, CommandOutput& output) {
         int const count = backupOnlinePlayers(msg("backup.note.console"));
         if (count > 0) {
-            output.success("{}", msg("backup.command.online_ok", count));
+            output.success(msg("backup.command.online_ok", count));
         } else {
-            output.error("{}", msg("backup.command.online_none"));
+            output.error(msg("backup.command.online_none"));
         }
     });
 
     command.overload().text("reload").execute([](CommandOrigin const&, CommandOutput& output) {
-        if (auto const error = Mod::getInstance().reloadConfig(); !error.empty()) {
-            output.error("{}", error);
+        if (auto const errorKey = Mod::getInstance().reloadConfig(); !errorKey.empty()) {
+            output.error(msg(errorKey));
             return;
         }
         auto const data = Mod::getInstance().dataDir();
@@ -57,7 +57,6 @@ void registerCommand() {
 
         auto const config = currentConfig();
         output.success(
-            "{}",
             msg(
                 "backup.command.reload_ok",
                 switchLabel(config.enableIntervalBackup),
@@ -71,42 +70,42 @@ void registerCommand() {
 
     command.overload().text("export").execute([](CommandOrigin const& origin, CommandOutput& output) {
         if (portBusy()) {
-            output.error("{}", msg("backup.port.busy"));
+            output.error(msg("backup.port.busy"));
             return;
         }
         auto*       entity = origin.getEntity();
         std::string uuid   = (entity != nullptr && entity->isPlayer()) ? static_cast<Player*>(entity)->getUuid().asString() : std::string{};
         startExportAll(uuid, [](PortResult const& result) {
-            getLogger().info("导出完成：成功 {} / 失败 {}，目录 {}", result.success, result.failed, result.dir);
+            getLogger().info(msg("log.command.export_done", result.success, result.failed, result.dir));
         });
-        output.success("{}", msg("backup.port.export_start"));
+        output.success(msg("backup.port.export_start"));
     });
 
     // 导入会覆盖所有玩家当前背包，必须显式加 confirm
     command.overload().text("import").execute([](CommandOrigin const&, CommandOutput& output) {
-        output.error("{}", msg("backup.command.import_hint"));
+        output.error(msg("backup.command.import_hint"));
     });
     command.overload().text("import").text("confirm").execute([](CommandOrigin const& origin, CommandOutput& output) {
         if (!externalBagsAvailable()) {
-            output.error("{}", msg("backup.external.missing_plain"));
+            output.error(msg("backup.external.missing_plain"));
             return;
         }
         if (portBusy()) {
-            output.error("{}", msg("backup.port.busy"));
+            output.error(msg("backup.port.busy"));
             return;
         }
         auto*       entity = origin.getEntity();
         std::string uuid   = (entity != nullptr && entity->isPlayer()) ? static_cast<Player*>(entity)->getUuid().asString() : std::string{};
         startImportAll(uuid, [](PortResult const& result) {
-            getLogger().info("导入完成：成功 {} / 失败 {}", result.success, result.failed);
+            getLogger().info(msg("log.command.import_done", result.success, result.failed));
         });
-        output.success("{}", msg("backup.command.import_ok"));
+        output.success(msg("backup.command.import_ok"));
     });
 
     command.overload().execute([](CommandOrigin const& origin, CommandOutput& output) {
         auto* entity = origin.getEntity();
         if (entity == nullptr || !entity->isPlayer()) {
-            output.error("{}", msg("backup.command.player_only"));
+            output.error(msg("backup.command.player_only"));
             return;
         }
         openMainMenu(*static_cast<Player*>(entity));

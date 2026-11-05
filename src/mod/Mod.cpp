@@ -7,6 +7,7 @@
 #include "mod/core/PlayerData.h"
 #include "mod/i18n/Text.h"
 #include "mod/core/Util.h"
+#include "mod/Version.h"
 
 namespace ib {
 
@@ -20,7 +21,7 @@ bool Mod::load() {
     loadTexts();
     mConfig = loadConfig(configPath(), getLogger());
     if (!mConfig) {
-        getLogger().error("配置加载失败，模组不会启用（请修正 {} 后重启或 /inventorybackup reload）", configPath().string());
+        getLogger().error(msg("log.mod.config_load_failed", formatPath(configPath())));
         return false;
     }
     return true;
@@ -31,7 +32,7 @@ bool Mod::enable() {
     std::error_code ec;
     fs::create_directories(data, ec);
     if (ec) {
-        getLogger().error("无法创建数据目录 {}: {}", data.string(), ec.message());
+        getLogger().error(msg("log.mod.data_dir_create_failed", formatPath(data), ec.message()));
         return false;
     }
 
@@ -44,7 +45,7 @@ bool Mod::enable() {
     startScheduler();
     registerCommand();
 
-    getLogger().info("背包备份已启用，数据目录: {}", data.string());
+    getLogger().info(msg("log.mod.enabled", IB_VERSION_STRING, formatPath(data)));
     return true;
 }
 
@@ -52,13 +53,13 @@ bool Mod::disable() {
     stopScheduler();
     unregisterEvents();
     savePlayerCache();
-    getLogger().info("背包备份已停用");
+    getLogger().info(msg("log.mod.disabled"));
     return true;
 }
 
 std::string Mod::reloadConfig() {
     auto loaded = loadConfig(configPath(), getLogger());
-    if (!loaded) return "配置解析失败，保持原配置（详见日志）";
+    if (!loaded) return "config.error.reload_failed";
     mConfig = std::move(*loaded);
     return {};
 }

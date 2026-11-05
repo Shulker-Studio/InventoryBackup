@@ -126,7 +126,7 @@ void showPage(
 }
 
 void tell(Player& player, std::string const& text) {
-    auto packet = TextPacket::createRawMessage(std::string{kMsgPrefix} + text);
+    auto packet = TextPacket::createRawMessage(msgPrefix() + text);
     player.sendNetworkPacket(packet);
 }
 

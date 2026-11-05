@@ -9,8 +9,11 @@ namespace ib {
 
 namespace fs = std::filesystem;
 
-// 玩家可见文案统一带这个前缀
-inline constexpr std::string_view kMsgPrefix = "§b[背包备份]§r ";
+// 玩家可见文案统一带这个前缀（文案在 lang/ 里，key: backup.common.prefix）
+std::string msgPrefix();
+
+// 展示用路径：统一用正斜杠，去掉冗余的 ./ 与重复分隔符
+std::string formatPath(fs::path const& path);
 
 int64_t nowMs();
 

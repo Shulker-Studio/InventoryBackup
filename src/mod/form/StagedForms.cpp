@@ -349,7 +349,7 @@ void openExternalEntry(Player& player, std::string const& uuid, MenuAction back)
                     tellError(target, T("backup.external.read_failed_short"));
                     return;
                 }
-                if (backupPlayer(uuid, T("backup.note.pre_external")) == 0) {
+                if (backupPlayerSync(uuid, T("backup.note.pre_external")) == 0) {
                     tell(target, T("backup.player.overwrite.pre_backup_failed"));
                     return;
                 }

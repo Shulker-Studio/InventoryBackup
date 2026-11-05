@@ -90,7 +90,7 @@ void openPlayerFunc(Player& player, PlayerRecord const& record, MenuAction back)
                     tellError(target, T("backup.common.no_own_bag"));
                     return;
                 }
-                if (backupPlayer(record.uuid, T("backup.note.pre_overwrite")) == 0) {
+                if (backupPlayerSync(record.uuid, T("backup.note.pre_overwrite")) == 0) {
                     tell(target, T("backup.player.overwrite.pre_backup_failed"));
                     return;
                 }
@@ -290,7 +290,7 @@ void openBackupEntry(Player& player, PlayerRecord const& record, int64_t time, M
                     tellError(target, T("backup.common.read_backup_failed"));
                     return;
                 }
-                if (backupPlayer(record.uuid, T("backup.note.pre_rollback")) == 0) {
+                if (backupPlayerSync(record.uuid, T("backup.note.pre_rollback")) == 0) {
                     tell(target, T("backup.backup.rollback.pre_backup_failed"));
                     return;
                 }
