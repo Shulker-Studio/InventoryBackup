@@ -15,6 +15,7 @@
 #include "mc/world/level/storage/db_helpers/Category.h"
 #include "mod/Mod.h"
 #include "mod/core/Util.h"
+#include "mod/i18n/Text.h"
 
 namespace ib {
 
@@ -28,6 +29,9 @@ using ojson = nlohmann::ordered_json;
 // 所以「数据键」必须从映射记录的 ServerId 标签里取，而不是自己拼。
 constexpr std::string_view kMappingPrefix = "player_";
 constexpr std::string_view kServerPrefix  = "player_server_";
+// BDS 的 forEachKeyWithPrefix 传进来的键已经去掉了匹配到的前缀，
+// 所以以 player_ 为前缀枚举时，数据键的样子是 server_<id>
+constexpr std::string_view kServerSuffix   = "server_";
 constexpr std::string_view kServerIdTag   = "ServerId";
 
 constexpr std::string_view kBagTags[] = {"Inventory", "Armor", "Offhand", "EnderChestInventory"};
@@ -170,22 +174,28 @@ std::vector<std::string> storedUuids() {
     auto*                    store = storage();
     if (store == nullptr) return uuids;
 
+    size_t scanned = 0;
     store->forEachKeyWithPrefix(
         kMappingPrefix,
         DBHelpers::Category::Player,
         [&](std::string_view key, std::string_view value) {
-            std::string rawKey{key};
+            // 键可能已经剥掉前缀，也可能没剥（不同版本行为不同），两种都认
+            if (key.starts_with(kMappingPrefix)) key.remove_prefix(kMappingPrefix.size());
             // 前缀 player_ 也会命中 player_server_*，那些是数据键，不是玩家
-            if (rawKey.starts_with(kServerPrefix)) return;
-            if (!rawKey.starts_with(kMappingPrefix)) return;
-            auto uuid = rawKey.substr(kMappingPrefix.size());
-            if (uuid.empty() || uuid.starts_with("editor_")) return;
+            if (key.starts_with(kServerSuffix)) return;
+            if (key.empty() || key.starts_with("editor_")) return;
+            ++scanned;
+            std::string uuid{key};
             if (auto sid = serverIdFromMappingValue(std::string{value}); sid) {
                 gDataKeyCache.insert_or_assign(uuid, normalizeDataKey(*sid));
             }
             uuids.push_back(std::move(uuid));
         }
     );
+    // 扫到了 player_ 键却一个都没认出来，说明 BDS 的键格式又变了
+    if (scanned > 0 && uuids.empty()) {
+        getLogger().warn(msg("log.player.mapping_unrecognized", scanned));
+    }
     return uuids;
 }
 
@@ -209,7 +219,7 @@ void capturePlayerTemplate(CompoundTag const& tag) {
     tmpl.erase("SelectedInventorySlot");
     if (tmpl.empty()) return;
     gPlayerTemplate = std::move(tmpl);
-    getLogger().debug("已捕获空玩家模板（{} 个标签）", gPlayerTemplate->size());
+    getLogger().debug(msg("log.player.template_captured", gPlayerTemplate->size()));
 }
 
 bool createStoredTag(std::string const& uuid, CompoundTag const& templateTag, CompoundTag const& bagTag) {
@@ -260,25 +270,38 @@ std::optional<PlayerRecord> cachedPlayer(std::string const& uuid) {
 }
 
 std::vector<PlayerRecord> allPlayers() {
-    std::vector<PlayerRecord> result;
+    std::vector<PlayerRecord>               result;
     std::unordered_map<std::string, size_t> seen;
+
+    // 同一个账号在世界库里可能有多条映射：离线 uuid 和 Xbox uuid 各一条，
+    // 都指向同一个 player_server_<ServerId>。所以按数据键去重，不按 uuid。
+    auto identityOf = [](std::string const& uuid) -> std::string {
+        if (auto key = dataKeyOf(uuid); key) return *key;
+        return uuid;
+    };
 
     auto push = [&](PlayerRecord record) {
         if (record.uuid.empty()) return;
-        if (auto it = seen.find(record.uuid); it != seen.end()) {
+        auto identity = identityOf(record.uuid);
+        if (auto it = seen.find(identity); it != seen.end()) {
             auto& existing = result[it->second];
             if (existing.name.empty()) existing.name = record.name;
             if (existing.xuid.empty()) existing.xuid = record.xuid;
             return;
         }
-        seen.emplace(record.uuid, result.size());
+        seen.emplace(std::move(identity), result.size());
         result.push_back(std::move(record));
     };
 
     for (auto const& entry : ll::service::PlayerInfo::getInstance().entries()) {
         push(PlayerRecord{entry.uuid.asString(), entry.xuid, entry.name});
     }
-    for (auto const& uuid : storedUuids()) {
+    // 名字缓存排在映射前面入表，重复映射时留下来的是有名字的那条
+    for (auto const& item : gCache) {
+        push(item.second);
+    }
+    auto const mappings = storedUuids();
+    for (auto const& uuid : mappings) {
         PlayerRecord record{uuid, {}, {}};
         if (auto cached = cachedPlayer(uuid); cached) {
             record.xuid = cached->xuid;
@@ -286,12 +309,10 @@ std::vector<PlayerRecord> allPlayers() {
         }
         push(std::move(record));
     }
-    for (auto const& [uuid, record] : gCache) {
-        push(record);
-    }
     for (auto& record : result) {
         if (record.name.empty()) record.name = shortUuid(record.uuid);
     }
+    getLogger().debug(msg("log.player.mapping_deduped", mappings.size(), result.size()));
     return result;
 }
 
@@ -323,7 +344,7 @@ void loadPlayerCache(fs::path const& path) {
             gCache.emplace(record.uuid, std::move(record));
         }
     } catch (std::exception const& e) {
-        getLogger().warn("玩家名字缓存解析失败（忽略）: {}", e.what());
+        getLogger().warn(msg("log.player.name_cache_parse_failed", e.what()));
     }
 }
 
@@ -333,7 +354,7 @@ void savePlayerCache() {
     for (auto const& [uuid, record] : gCache) {
         json[uuid] = ojson{{"xuid", record.xuid}, {"name", record.name}};
     }
-    if (ll::file_utils::writeFile(gCachePath, json.dump(2))) gCacheDirty = false;
+    if (ll::file_utils::writeFile(gCachePath, json.dump())) gCacheDirty = false;
 }
 
 void rememberPlayer(std::string const& uuid, std::string const& xuid, std::string const& name) {
