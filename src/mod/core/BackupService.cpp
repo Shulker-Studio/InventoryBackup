@@ -3,9 +3,13 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <system_error>
+#include <vector>
 
+#include "mod/core/AsyncIo.h"
 #include "mod/core/BackupStore.h"
 #include "mod/core/BagOps.h"
 #include "mod/core/PlayerData.h"
@@ -83,18 +87,18 @@ namespace {
 std::optional<ojson> readExportIndex() {
     auto const path = indexPath();
     if (path.empty()) {
-        getLogger().error("还没有任何导出批次（{}）", exportDir().string());
+        getLogger().error(msg("log.service.no_export_batch", formatPath(exportDir())));
         return std::nullopt;
     }
     auto const content = ll::file_utils::readFile(path);
     if (!content) {
-        getLogger().error("找不到导出索引: {}", path.string());
+        getLogger().error(msg("log.service.export_index_missing", formatPath(path)));
         return std::nullopt;
     }
     try {
         return ojson::parse(*content);
     } catch (std::exception const& e) {
-        getLogger().error("导出索引解析失败: {}", e.what());
+        getLogger().error(msg("log.service.export_index_parse_failed", e.what()));
         return std::nullopt;
     }
 }
@@ -104,12 +108,25 @@ std::optional<ojson> readExportIndex() {
 int64_t backupPlayer(std::string const& uuid, std::string const& note) {
     auto bag = snapshotBag(uuid);
     if (!bag) {
-        getLogger().warn("备份失败，取不到背包数据: {}", uuid);
+        getLogger().warn(msg("log.service.backup_no_bag", uuid));
         return 0;
     }
     auto time = backups().create(uuid, *bag, note);
     if (time == 0) {
-        getLogger().error("备份写入失败: {}", uuid);
+        getLogger().error(msg("log.service.backup_write_failed", uuid));
+    }
+    return time;
+}
+
+int64_t backupPlayerSync(std::string const& uuid, std::string const& note) {
+    auto bag = snapshotBag(uuid);
+    if (!bag) {
+        getLogger().warn(msg("log.service.backup_no_bag", uuid));
+        return 0;
+    }
+    auto time = backups().createSync(uuid, *bag, note);
+    if (time == 0) {
+        getLogger().error(msg("log.service.backup_write_failed", uuid));
     }
     return time;
 }
@@ -133,7 +150,7 @@ bool viewBagAs(Player& viewer, CompoundTag const& bag, std::string* error) {
     if (auto own = snapshotBag(uuid); own) {
         cacheStore().set(uuid, uuid, viewer.getRealName(), *own);
     } else {
-        getLogger().warn("查包前缓存自己的背包失败: {}", uuid);
+        getLogger().warn(msg("log.service.view_cache_failed", uuid));
     }
     return restoreBag(uuid, bag, error);
 }
@@ -152,14 +169,19 @@ bool restoreViewCache(Player& viewer, std::string* error) {
 
 namespace {
 
-// 分片大小：每批处理这么多玩家，然后让出一次服务器线程
-constexpr size_t kPortChunk = 8;
+// 分片大小：每批处理这么多玩家，然后让出一次服务器线程。
+// 执行器的 30ms 预算只在回调之间切，一个回调里活多干得久，所以可配（config.portChunkSize），默认很小。
+// 它同时也是「同时最多几个后台任务」的上限
+size_t portChunk() {
+    auto const size = currentConfig().portChunkSize;
+    return size < 1 ? 1 : static_cast<size_t>(size);
+}
 
 // 通知管理员：uuid 空表示只写日志
 void notifyPlayer(std::string const& uuid, std::string const& text) {
     if (uuid.empty()) return;
     if (auto* player = onlinePlayer(uuid); player != nullptr) {
-        auto packet = TextPacket::createRawMessage(std::string{kMsgPrefix} + text);
+        auto packet = TextPacket::createRawMessage(msgPrefix() + text);
         player->sendNetworkPacket(packet);
     }
 }
@@ -177,16 +199,17 @@ struct PortJob {
     fs::path                  batch;
     PortResult                result;
     size_t                    pos      = 0;
+    size_t                    pending  = 0; // 还在后台跑的个数，上限 portChunkSize
     int                       lastPct  = 0;
 };
 
 std::shared_ptr<PortJob> gJob;
 
-void scheduleChunk(std::shared_ptr<PortJob> job);
+void schedulePump(std::shared_ptr<PortJob> job);
 
 void finishJob(std::shared_ptr<PortJob> const& job, std::string const& message) {
     notifyPlayer(job->notifyUuid, message);
-    getLogger().info("{}", message);
+    getLogger().info(message);
     auto const done = job->onDone;
     gJob.reset();
     if (done) done(job->result);
@@ -205,91 +228,134 @@ void reportProgress(std::shared_ptr<PortJob> const& job, size_t total) {
     notifyPlayer(job->notifyUuid, msg(key, percent, job->pos, total));
 }
 
-void runExportChunk(std::shared_ptr<PortJob> const& job) {
-    auto const total = job->records.size();
-    auto const end   = std::min(total, job->pos + kPortChunk);
-    for (; job->pos < end; ++job->pos) {
-        auto const& record = job->records[job->pos];
-        auto        bag    = snapshotBag(record.uuid);
-        if (!bag) {
-            getLogger().warn("导出时取不到背包数据: {}", record.uuid);
-            ++job->result.failed;
-            continue;
-        }
-        if (!writeBagFile(job->batch / (record.uuid + kBagFileSuffix), *bag)) {
-            getLogger().warn("导出背包文件写入失败: {}", record.uuid);
-            ++job->result.failed;
-            continue;
-        }
-        job->playersJson[record.uuid] = ojson{
-            {"xuid", record.xuid                 },
-            {"name", record.name                 },
-            {"file", record.uuid + kBagFileSuffix},
-        };
-        ++job->result.success;
-    }
-
-    if (job->pos < total) {
-        reportProgress(job, total);
-        scheduleChunk(job);
-        return;
-    }
-
-    ojson root{
-        {"version",    1                         },
-        {"exportedAt", formatTime(nowMs())       },
+// 收尾：所有人发完了才写索引
+void advanceExport(std::shared_ptr<PortJob> const& job) {
+    ojson      root{
+        {"version",    1                  },
+        {"exportedAt", formatTime(nowMs())},
         {"players",    std::move(job->playersJson)}
     };
-    if (!ll::file_utils::writeFile(job->batch / kIndexFileName, root.dump(2))) {
-        getLogger().error("导出索引写入失败: {}", (job->batch / kIndexFileName).string());
-        job->result.failed += job->result.success;
-        job->result.success = 0;
-    }
-    finishJob(job, msg("backup.stage.export_done", job->result.success, job->result.failed, job->result.dir));
+    auto const indexText = root.dump(2);
+    // 导出包是要给人翻的，这里保留缩进；写盘挪到后台
+    runIo([job, indexText]() {
+        bool const ok = ll::file_utils::writeFile(job->batch / kIndexFileName, indexText);
+        backToServer([job, ok]() {
+            if (gJob != job) return; // 任务已被取消/替换，安静收摊
+            if (!ok) {
+                getLogger().error(msg("log.service.export_index_write_failed", formatPath(job->batch / kIndexFileName)));
+                job->result.failed += job->result.success;
+                job->result.success = 0;
+            }
+            finishJob(job, msg("backup.stage.export_done", job->result.success, job->result.failed, job->result.dir));
+        });
+    });
 }
 
-void runImportChunk(std::shared_ptr<PortJob> const& job) {
-    auto const total = job->targets.size();
-    auto const end   = std::min(total, job->pos + kPortChunk);
-    for (; job->pos < end; ++job->pos) {
-        auto const& uuid = job->targets[job->pos];
-        auto        bag  = readBagFile(job->batch / (uuid + kBagFileSuffix));
+// 泵：始终让最多 portChunkSize 个任务在后台跑，完成一个立刻补一个。
+// 每批都要等一个 tick，所以"补满"比"等整批回来再派下一批"省掉一半的等待
+void pumpExport(std::shared_ptr<PortJob> const& job) {
+    if (gJob != job) return;
+
+    auto const total = job->records.size();
+    // 压缩档位在主线程算好再带进后台，后台不去碰 Config
+    auto const level = bagio::levelFrom(currentConfig().compressLevel);
+
+    // 服务端线程只做不能挪的那一半：从活体玩家读 NBT 并序列化成二进制字节串
+    while (job->pending < portChunk() && job->pos < total) {
+        auto const& record = job->records[job->pos++];
+        auto        bag    = snapshotBag(record.uuid);
         if (!bag) {
-            getLogger().warn("导入跳过（背包文件缺失或损坏）: {}", uuid);
+            getLogger().warn(msg("log.service.export_no_bag", record.uuid));
             ++job->result.failed;
             continue;
         }
-        auto const& value = job->index[uuid];
-        rememberPlayer(uuid, value.value("xuid", std::string{}), value.value("name", std::string{}));
-        std::string error;
-        if (restoreToPlayer(uuid, *bag, &error)) {
-            ++job->result.success;
-        } else {
-            getLogger().warn("导入失败 {}: {}", uuid, error);
-            ++job->result.failed;
-        }
+
+        ++job->pending;
+        // 压缩 + 写盘全在后台，只把成败和不可变字段带回来
+        runIo([job, uuid = record.uuid, xuid = record.xuid, name = record.name,
+               path = job->batch / (record.uuid + kBagFileSuffix), binary = bagio::encode(*bag), level]() {
+            auto const compressed = bagio::deflate(binary, level);
+            bool const ok         = !compressed.empty() && bagio::writeBinary(path, compressed);
+            backToServer([job, ok, uuid, xuid, name]() {
+                if (gJob != job) return;
+                if (ok) {
+                    job->playersJson[uuid] = ojson{
+                        {"xuid", xuid                 },
+                        {"name", name                 },
+                        {"file", uuid + kBagFileSuffix},
+                    };
+                    ++job->result.success;
+                } else {
+                    getLogger().warn(msg("log.service.export_bag_write_failed", uuid));
+                    ++job->result.failed;
+                }
+                --job->pending;
+                reportProgress(job, job->records.size());
+                pumpExport(job); // 补下一个
+            });
+        });
     }
 
-    if (job->pos < total) {
-        reportProgress(job, total);
-        scheduleChunk(job);
-        return;
-    }
+    if (job->pos >= total && job->pending == 0) advanceExport(job);
+}
 
+void advanceImport(std::shared_ptr<PortJob> const& job) {
     savePlayerCache();
     finishJob(job, msg("backup.external.import_all_done", job->result.success, job->result.failed));
 }
 
-void runChunk(std::shared_ptr<PortJob> job) {
+// 泵：同 pumpExport
+void pumpImport(std::shared_ptr<PortJob> const& job) {
+    if (gJob != job) return;
+
+    auto const total = job->targets.size();
+    while (job->pending < portChunk() && job->pos < total) {
+        auto const uuid = job->targets[job->pos++];
+
+        ++job->pending;
+        // 读盘 + 解压放后台；解出来的字节再回主线程还原成 NBT 并写回玩家数据
+        runIo([job, uuid, path = job->batch / (uuid + kBagFileSuffix)] {
+            std::string                raw;
+            std::optional<std::string> binary;
+            if (bagio::readBinary(path, raw)) binary = bagio::inflate(raw);
+            backToServer([job, uuid, binary = std::move(binary)]() {
+                if (gJob != job) return;
+                auto bag = binary ? bagio::decode(*binary) : std::nullopt;
+                if (!bag) {
+                    getLogger().warn(msg("log.service.import_skipped", uuid));
+                    ++job->result.failed;
+                } else {
+                    auto const& value = job->index[uuid];
+                    rememberPlayer(uuid, value.value("xuid", std::string{}), value.value("name", std::string{}));
+                    std::string error;
+                    if (restoreToPlayer(uuid, *bag, &error)) {
+                        ++job->result.success;
+                    } else {
+                        getLogger().warn(msg("log.service.import_failed", uuid, error));
+                        ++job->result.failed;
+                    }
+                }
+                --job->pending;
+                reportProgress(job, job->targets.size());
+                pumpImport(job); // 补下一个
+            });
+        });
+    }
+
+    if (job->pos >= total && job->pending == 0) advanceImport(job);
+}
+
+void pumpJob(std::shared_ptr<PortJob> job) {
     if (job->kind == PortKind::Export) {
-        runExportChunk(job);
+        pumpExport(job);
     } else {
-        runImportChunk(job);
+        pumpImport(job);
     }
 }
 
-void scheduleChunk(std::shared_ptr<PortJob> job) {
-    ll::thread::ServerThreadExecutor::getDefault().execute([job]() { runChunk(job); });
+// 只负责把第一批任务挂到服务端线程上，之后由完成回调自己续
+void schedulePump(std::shared_ptr<PortJob> job) {
+    ll::thread::ServerThreadExecutor::getDefault().execute([job]() { pumpJob(job); });
 }
 
 } // namespace
@@ -315,17 +381,17 @@ void startExportAll(std::string const& notifyUuid, PortDone onDone) {
     std::error_code ec;
     fs::create_directories(batch, ec);
     if (ec) {
-        getLogger().error("无法创建导出目录 {}: {}", batch.string(), ec.message());
+        getLogger().error(msg("log.service.export_dir_create_failed", formatPath(batch), ec.message()));
         notifyPlayer(notifyUuid, msg("backup.error.export_dir", ec.message()));
         return;
     }
     job->batch      = batch;
-    job->result.dir = batch.string();
+    job->result.dir = formatPath(batch);
     gJob            = job;
 
-    // 先立刻回一条「开始」，玩家列表放到下一批里收集，避免看起来像没反应
+    // 先立刻回一条「开始」，玩家列表等下一个 tick 再收集，避免看起来像没反应
     notifyPlayer(notifyUuid, msg("backup.port.export_start"));
-    getLogger().info("开始导出玩家背包到 {}", job->batch.string());
+    getLogger().info(msg("log.service.export_start", formatPath(job->batch)));
 
     ll::thread::ServerThreadExecutor::getDefault().execute([job]() {
         job->records = allPlayers();
@@ -334,7 +400,7 @@ void startExportAll(std::string const& notifyUuid, PortDone onDone) {
             return;
         }
         notifyPlayer(job->notifyUuid, msg("backup.port.export_collected", job->records.size()));
-        scheduleChunk(job);
+        schedulePump(job);
     });
 }
 
@@ -356,7 +422,7 @@ void startImportAll(std::string const& notifyUuid, PortDone onDone) {
     job->notifyUuid = notifyUuid;
     job->onDone     = std::move(onDone);
     job->batch      = batch;
-    job->result.dir = batch.string();
+    job->result.dir = formatPath(batch);
     job->index      = index->value("players", ojson::object());
     for (auto it = job->index.begin(); it != job->index.end(); ++it) {
         job->targets.push_back(it.key());
@@ -368,8 +434,8 @@ void startImportAll(std::string const& notifyUuid, PortDone onDone) {
     gJob = job;
 
     notifyPlayer(notifyUuid, msg("backup.port.import_start", job->targets.size()));
-    getLogger().info("开始从 {} 导入玩家背包（{} 名）", job->batch.string(), job->targets.size());
-    scheduleChunk(job);
+    getLogger().info(msg("log.service.import_start", formatPath(job->batch), job->targets.size()));
+    schedulePump(job);
 }
 
 bool externalBagsAvailable() { return exportFileExists(); }

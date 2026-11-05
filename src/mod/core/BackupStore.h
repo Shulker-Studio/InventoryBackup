@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "mc/deps/nbt/CompoundTag.h"
+#include "mod/config/Config.h"
 
 namespace ib {
 
@@ -29,6 +31,23 @@ struct StagedEntry {
     std::string name;
 };
 
+// 背包文件的编解码原语，按线程亲和性分开：
+//   encode/decode 碰 NBT 对象，只在服务端线程用；
+//   deflate/inflate/readBinary/writeBinary 是纯 CPU 或纯 I/O，可以放到线程池。
+// 后台任务只能拿到字节串，不能拿 CompoundTag 去跨线程传。
+namespace bagio {
+// 档位定义在 Config.h（配置层是唯一来源），这边只是别名
+using Level = CompressLevel;
+
+Level                      levelFrom(std::string const& name);                                    // 服务端线程：配置字符串 -> 档位
+std::string                encode(CompoundTag const& bag);                                        // 服务端线程：NBT -> 小端二进制
+std::optional<CompoundTag> decode(std::string_view binary);                                       // 服务端线程：小端二进制 -> NBT
+std::string                deflate(std::string_view binary, Level level);                         // 可后台：gzip 压缩，失败返回空
+std::optional<std::string> inflate(std::string_view raw);                                         // 可后台：gzip 解压
+bool                       readBinary(std::filesystem::path const& path, std::string& out);       // 可后台：读文件
+bool                       writeBinary(std::filesystem::path const& path, std::string_view data); // 可后台：写文件
+} // namespace bagio
+
 // 背包文件读写：<dir>/<time>.nbt.gz（gzip 压缩的玩家背包 NBT）
 bool writeBagFile(std::filesystem::path const& path, CompoundTag const& bag);
 
@@ -45,7 +64,12 @@ public:
     bool load(std::filesystem::path const& dataDir);
 
     // 成功返回备份时间戳（毫秒），失败返回 0
+    // 建一份备份：NBT -> 字节串在调用线程做，压缩与写盘丢后台，索引等文件落盘后回主线程提交。
+    // 返回时间戳表示「已受理」，不是「已写盘」；需要确保已落盘的场景用 createSync
     int64_t create(std::string const& uuid, CompoundTag const& bag, std::string const& note);
+
+    // 同步版：写完文件和索引才返回。只有「先备份再覆盖」这种必须确认安全的场景才用
+    int64_t createSync(std::string const& uuid, CompoundTag const& bag, std::string const& note);
 
     std::optional<CompoundTag> read(std::string const& uuid, int64_t time) const;
 
@@ -61,8 +85,18 @@ public:
     // 直接枚举 backups/<uuid>/index.json，不依赖内存索引
     [[nodiscard]] std::vector<std::string> indexedUuids() const;
 
-    // 清理超过 maxKeepDays 天的备份，返回删除的条数（maxKeepDays <= 0 表示不清理）
-    int purge(int maxKeepDays);
+    // 过期清理，按玩家切片：uuids 是待处理的玩家列表，cursor 是进度（进出双向）；
+    // 本次最多花 budget 时间，返回本次删掉的备份数。maxKeepDays <= 0 时直接跳过（cursor 推到末尾）
+    size_t purgeBatch(
+        std::vector<std::string> const& uuids,
+        size_t&                         cursor,
+        int                             maxKeepDays,
+        std::chrono::milliseconds       budget
+    );
+
+    // 索引缓存上限：超过 limit 就清到一半（limit = 0 表示不限）。
+    // 只能在没人持有 indexOf 返回的引用时调（比如调度器每拍末尾）
+    void trimIndexCache(size_t limit);
 
 private:
     [[nodiscard]] std::filesystem::path playerDir(std::string const& uuid) const;
@@ -73,9 +107,27 @@ private:
     std::vector<BackupDay>& indexOf(std::string const& uuid, bool* justLoaded = nullptr);
     bool                    saveIndex(std::string const& uuid);
 
+    // 分配一个没被占用的时间戳（同一毫秒内多次备份会顺延，保证背包文件名不撞）
+    static int64_t allocateTime(std::vector<BackupDay> const& days);
+    // 把这条备份记进内存（挂在当天这一桶的最前面）
+    static void reserve(std::vector<BackupDay>& days, int64_t time, std::string const& note);
+    // 只撤内存里的占位，返回是否真的删掉了
+    bool removeEntry(std::string const& uuid, int64_t time);
+
+    // 后台写盘回来的收尾（服务端线程）：成功才提交索引，失败就把占位和文件撤掉
+    void finishCreate(std::string const& uuid, int64_t time, bool ok);
+    // 撤占位 + 删文件 + 必要时重写索引（别的备份可能已经把这条一起写进索引了）
+    void rollbackCreate(std::string const& uuid, int64_t time);
+
+    // 清理单个玩家的过期天，返回删掉的备份数；清完就把他的索引从缓存里踢掉
+    size_t purgeOne(std::string const& uuid, int64_t threshold);
+
     std::filesystem::path mRoot;
     // uuid -> 已加载的天列表（节点式容器，取到的引用不会因后续插入失效）
     std::unordered_map<std::string, std::vector<BackupDay>> mIndex;
+    // uuid -> 还在后台写盘的备份时间戳。它们既是「不许踢出 mIndex」的理由
+    // （踢了回来提交索引会失败），也是「先别写进索引」的理由（文件还没落盘）
+    std::unordered_map<std::string, std::vector<int64_t>> mPendingWrites;
 };
 
 BackupStore& backups();

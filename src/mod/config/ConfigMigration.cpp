@@ -20,6 +20,11 @@ ojson toJson(Config const& config) {
         {"enableDeathBackup",     config.enableDeathBackup      },
         {"skipSimulatedPlayers",  config.skipSimulatedPlayers   },
         {"pageSize",              config.pageSize               },
+        {"compressLevel",         config.compressLevel          },
+        {"tickBudgetMs",          config.tickBudgetMs           },
+        {"portChunkSize",         config.portChunkSize          },
+        {"indexCacheLimit",       config.indexCacheLimit        },
+        {"backgroundIo",          config.backgroundIo           },
     };
 }
 
@@ -29,6 +34,15 @@ void migrateStep(int fromVersion, ojson& json) {
     case 1: // v2：新增 pageSize（表单每页条数）
         if (!json.contains("pageSize")) json["pageSize"] = Config{}.pageSize;
         break;
+    case 2: { // v3：新增性能旋钮
+        Config const defaults;
+        if (!json.contains("compressLevel")) json["compressLevel"] = defaults.compressLevel;
+        if (!json.contains("tickBudgetMs")) json["tickBudgetMs"] = defaults.tickBudgetMs;
+        if (!json.contains("portChunkSize")) json["portChunkSize"] = defaults.portChunkSize;
+        if (!json.contains("indexCacheLimit")) json["indexCacheLimit"] = defaults.indexCacheLimit;
+        if (!json.contains("backgroundIo")) json["backgroundIo"] = defaults.backgroundIo;
+        break;
+    }
     default: break;
     }
 }
@@ -36,11 +50,17 @@ void migrateStep(int fromVersion, ojson& json) {
 } // namespace
 
 std::string validateConfig(Config const& config) {
-    if (config.backupIntervalMinutes < 1) return "backupIntervalMinutes 必须 >= 1";
-    if (config.backupIntervalMinutes > 24 * 60) return "backupIntervalMinutes 不能超过 1440";
-    if (config.maxKeepDays < 0) return "maxKeepDays 不能为负数";
-    if (config.pageSize < 1) return "pageSize 必须 >= 1";
-    if (config.pageSize > 50) return "pageSize 不能超过 50";
+    if (config.backupIntervalMinutes < 1) return "config.error.interval_min";
+    if (config.backupIntervalMinutes > 24 * 60) return "config.error.interval_max";
+    if (config.maxKeepDays < 0) return "config.error.keep_days_negative";
+    if (config.pageSize < 1) return "config.error.page_size_min";
+    if (config.pageSize > 50) return "config.error.page_size_max";
+    if (!compressLevelFromName(config.compressLevel)) return "config.error.compress_level";
+    if (config.tickBudgetMs < 1) return "config.error.tick_budget_min";
+    if (config.tickBudgetMs > 50) return "config.error.tick_budget_max";
+    if (config.portChunkSize < 1) return "config.error.port_chunk_min";
+    if (config.portChunkSize > 64) return "config.error.port_chunk_max";
+    if (config.indexCacheLimit < 0) return "config.error.cache_limit_negative";
     return {};
 }
 
@@ -53,14 +73,16 @@ ConfigLoadResult migrateConfig(std::string const& text) {
         try {
             json = ojson::parse(text, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
         } catch (nlohmann::json::parse_error const& e) {
-            result.error = std::string{"JSON 语法错误: "} + e.what();
+            result.errorKey    = "config.error.json_syntax";
+            result.errorDetail = e.what();
             return result;
         } catch (std::exception const& e) {
-            result.error = std::string{"配置解析失败: "} + e.what();
+            result.errorKey    = "config.error.parse_failed";
+            result.errorDetail = e.what();
             return result;
         }
         if (!json.is_object()) {
-            result.error = "配置根节点必须是对象";
+            result.errorKey = "config.error.root_not_object";
             return result;
         }
     }
@@ -92,9 +114,17 @@ ConfigLoadResult migrateConfig(std::string const& text) {
     readBool("skipSimulatedPlayers", config.skipSimulatedPlayers);
     readInt("pageSize", config.pageSize);
 
+    if (auto it = json.find("compressLevel"); it != json.end() && it->is_string()) {
+        config.compressLevel = it->get<std::string>();
+    }
+    readInt("tickBudgetMs", config.tickBudgetMs);
+    readInt("portChunkSize", config.portChunkSize);
+    readInt("indexCacheLimit", config.indexCacheLimit);
+    readBool("backgroundIo", config.backgroundIo);
+
     result.config = config;
-    if (auto const error = validateConfig(config); !error.empty()) {
-        result.error = error;
+    if (auto const errorKey = validateConfig(config); !errorKey.empty()) {
+        result.errorKey = errorKey;
         return result;
     }
 

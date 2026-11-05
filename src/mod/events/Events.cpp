@@ -1,11 +1,14 @@
 #include "mod/events/Events.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <thread>
+#include <memory>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "ll/api/coro/CoroTask.h"
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/player/PlayerDieEvent.h"
 #include "ll/api/event/player/PlayerDisconnectEvent.h"
@@ -30,9 +33,31 @@ ll::event::ListenerPtr gDieListener;
 // uuid -> 上次备份时间（毫秒）
 std::unordered_map<std::string, int64_t> gLastBackupAt;
 
-int64_t           gLastPurgeDay = 0;
-std::thread       gScheduler;
-std::atomic<bool> gSchedulerStop{false};
+// 空闲心跳：定时备份是分钟粒度，没必要 5 秒一醒。
+// 取「备份间隔 / 4」并夹在 5~30 秒，1 分钟的配置也准时，而 15 分钟的默认配置只要 30 秒一醒。
+constexpr std::chrono::milliseconds kMinIdleTick{5000};
+constexpr std::chrono::milliseconds kMaxIdleTick{30000};
+// 还有活没干完时的心跳：缩到 1 tick（50ms），尽快把积压的做完再回到空闲心跳
+constexpr std::chrono::milliseconds kBusyTick{50};
+
+int64_t gLastPurgeDay = 0;
+// 上一拍备份没做完（超预算），下一拍缩短心跳接着做
+bool gBackupPending = false;
+// 分片清理的进度（当天跑完后清空）
+std::vector<std::string> gPurgeUuids;
+size_t                   gPurgeCursor  = 0;
+size_t                   gPurgeRemoved = 0;
+
+// 停止标志：每一轮调度拿一个新的 token，旧循环醒了看到自己的 token 就退出
+std::shared_ptr<std::atomic<bool>> gSchedulerStop;
+
+bool purgePending() { return gPurgeCursor < gPurgeUuids.size(); }
+
+std::chrono::milliseconds idleTick() {
+    auto const interval = static_cast<int64_t>(currentConfig().backupIntervalMinutes) * 60000;
+    auto const quarter  = std::chrono::milliseconds{interval / 4};
+    return std::clamp(quarter, kMinIdleTick, kMaxIdleTick);
+}
 
 void onPlayerJoin(ll::event::player::PlayerJoinEvent& event) {
     auto& player = event.self();
@@ -54,7 +79,7 @@ void onPlayerDisconnect(ll::event::player::PlayerDisconnectEvent& event) {
     rememberPlayer(uuid, player.getXuid(), player.getRealName());
     if (config.value_or(Config{}).enableLeaveBackup) {
         if (backupPlayer(uuid, msg("backup.note.leave")) == 0) {
-            getLogger().warn("玩家退出备份失败: {}", uuid);
+            getLogger().warn(msg("log.event.leave_backup_failed", uuid));
         }
     }
     gLastBackupAt.erase(uuid);
@@ -69,7 +94,7 @@ void onPlayerDie(ll::event::player::PlayerDieEvent& event) {
     if (isSimulated(player)) return;
     auto uuid = player.getUuid().asString();
     if (backupPlayer(uuid, msg("backup.note.death")) == 0) {
-        getLogger().warn("玩家死亡备份失败: {}", uuid);
+        getLogger().warn(msg("log.event.death_backup_failed", uuid));
     }
 }
 
@@ -77,9 +102,15 @@ void onPlayerDie(ll::event::player::PlayerDieEvent& event) {
 void runScheduledWork() {
     Config config = currentConfig();
     auto   now    = nowMs();
+    // 每拍最多占服务端线程多久：备份和清理共用这个预算，可以配（config.tickBudgetMs）
+    auto const budget = std::chrono::milliseconds{config.tickBudgetMs};
+
+    gBackupPending = false;
 
     if (config.enableIntervalBackup) {
         int64_t const interval = static_cast<int64_t>(config.backupIntervalMinutes) * 60 * 1000;
+        auto const    begin    = std::chrono::steady_clock::now();
+        int           done     = 0;
         for (auto* player : onlinePlayers(!config.skipSimulatedPlayers)) {
             auto  uuid = player->getUuid().asString();
             auto& last = gLastBackupAt[uuid];
@@ -88,6 +119,13 @@ void runScheduledWork() {
                 continue;
             }
             if (now - last < interval) continue;
+            // 一人一拍的标准上很便宜，但重启后大家同时到期，一次几十个就是一两百毫秒的尖峰；
+            // 超预算先收手，没处理的 last 没被推进，下一拍自然接着来
+            if (done > 0 && std::chrono::steady_clock::now() - begin > budget) {
+                gBackupPending = true;
+                break;
+            }
+            ++done;
             if (backupPlayer(uuid, msg("backup.note.interval")) != 0) {
                 last = now;
             } else {
@@ -100,10 +138,24 @@ void runScheduledWork() {
     int64_t const today = todayStartMs();
     if (gLastPurgeDay != today) {
         gLastPurgeDay = today;
-        if (int removed = backups().purge(config.maxKeepDays); removed > 0) {
-            getLogger().info("已清理 {} 条超过 {} 天的背包备份", removed, config.maxKeepDays);
+        gPurgeUuids   = backups().indexedUuids();
+        gPurgeCursor  = 0;
+        gPurgeRemoved = 0;
+    }
+    if (purgePending()) {
+        gPurgeRemoved += backups().purgeBatch(gPurgeUuids, gPurgeCursor, config.maxKeepDays, budget);
+        if (!purgePending()) {
+            if (gPurgeRemoved > 0) {
+                getLogger().info(msg("log.purge_done", gPurgeRemoved, config.maxKeepDays));
+            }
+            gPurgeUuids.clear();
+            gPurgeUuids.shrink_to_fit();
+            gPurgeRemoved = 0;
         }
     }
+
+    // 收尾：索引缓存有上限，满过一次就清到一半（这里没有任何人持有 indexOf 的引用）
+    backups().trimIndexCache(static_cast<size_t>(config.indexCacheLimit));
 }
 
 } // namespace
@@ -120,7 +172,7 @@ void registerEvents() {
         gDieListener = bus.emplaceListener<ll::event::player::PlayerDieEvent>(onPlayerDie);
     }
     if (!gJoinListener || !gDisconnectListener || !gDieListener) {
-        getLogger().error("部分事件监听注册失败，对应的自动备份可能不生效");
+        getLogger().error(msg("log.event.listen_failed"));
     }
 }
 
@@ -143,29 +195,38 @@ void unregisterEvents() {
 
 void startScheduler() {
     stopScheduler();
-    gLastPurgeDay = todayStartMs();
-    // 这里刻意不用 std::jthread / std::stop_token：MSVC 的 stop_token 会导入
-    // MSVCP140_ATOMIC_WAIT.dll（C++20 原子等待），而它只随较新的 vcredist 分发，
-    // 老服务器缺这个 DLL 会让模组直接加载失败（错误码 126）。拿 atomic<bool> 顶上。
-    gSchedulerStop.store(false, std::memory_order_relaxed);
-    gScheduler = std::thread{[] {
-        // 启用后先跑一轮，顺便补一次过期清理
-        ll::thread::ServerThreadExecutor::getDefault().execute(runScheduledWork);
-        while (!gSchedulerStop.load(std::memory_order_relaxed)) {
-            for (int i = 0; i < 10 && !gSchedulerStop.load(std::memory_order_relaxed); ++i) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            }
-            if (gSchedulerStop.load(std::memory_order_relaxed)) break;
-            ll::thread::ServerThreadExecutor::getDefault().execute(runScheduledWork);
+    // 从 0 开始：启动后第一拍补一次过期清理（以前预置成今天，跨天关机的服永远清不到）
+    gLastPurgeDay  = 0;
+    gBackupPending = false;
+    gPurgeUuids.clear();
+    gPurgeCursor  = 0;
+    gPurgeRemoved = 0;
+
+    auto token     = std::make_shared<std::atomic<bool>>(false);
+    gSchedulerStop = token;
+
+    // 用 ll 的协程 + 服务端线程执行器，不再自己开线程：co_await 一个 duration 就是
+    // executeAfter（按 tick 计时），到期在服务端线程上恢复，世界不 tick 时自然不跑
+    ll::coro::keepThis([token]() -> ll::coro::CoroTask<> {
+        while (!token->load(std::memory_order_relaxed)) {
+            co_await (purgePending() || gBackupPending ? kBusyTick : idleTick());
+            if (token->load(std::memory_order_relaxed)) co_return;
+            runScheduledWork();
         }
-    }};
+        co_return;
+    }).launch(ll::thread::ServerThreadExecutor::getDefault());
 }
 
 void stopScheduler() {
-    if (gScheduler.joinable()) {
-        gSchedulerStop.store(true, std::memory_order_relaxed);
-        gScheduler.join();
-    }
+    // 只置标志，不销毁协程帧：SleepAwaiter 把 handle 留在了执行器里，
+    // 销毁帧会让那一拍去恢复已释放的帧。循环下一拍醒来自己退出，帧随之释放
+    if (gSchedulerStop) gSchedulerStop->store(true, std::memory_order_relaxed);
+    gSchedulerStop.reset();
+
+    gBackupPending = false;
+    gPurgeUuids.clear();
+    gPurgeCursor  = 0;
+    gPurgeRemoved = 0;
 }
 
 } // namespace ib

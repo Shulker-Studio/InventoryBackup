@@ -13,8 +13,11 @@ class Player;
 
 namespace ib {
 
-// 备份一名玩家（在线取内存快照，离线读世界库）。成功返回备份时间戳，失败返回 0
+// 备份一名玩家（在线取内存快照，离线读世界库）。返回备份时间戳表示已受理，写盘在后台异步完成
 int64_t backupPlayer(std::string const& uuid, std::string const& note);
+
+// 同步版：请求返回时文件和索引都已落盘。「先备份再覆盖」这种必须确认安全的场景用这个
+int64_t backupPlayerSync(std::string const& uuid, std::string const& note);
 
 // 备份所有在线玩家，返回成功条数
 int backupOnlinePlayers(std::string const& note);
