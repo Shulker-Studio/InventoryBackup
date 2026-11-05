@@ -553,3 +553,6 @@ fabric.properties
 # 本地验证用：服务器数据快照、扫描缓存
 .server-data-backup/
 tools/
+/src_bak_tmp/
+/.scratch/
+/*.patch

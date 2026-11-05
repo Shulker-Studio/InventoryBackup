@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # 版本号来自 git describe --tags，浅克隆拿不到 tag
+          fetch-depth: 0 # 留完整历史：构建产物带 git 短 hash，也方便按提交排查
 
       - uses: xmake-io/github-action-setup-xmake@v1
         # with:

@@ -1,3 +1,6 @@
+# 注意：这份配置复现不出当前提交里的格式。仓库代码出自旧版 clang-format，
+# 本机的 20/21 版本会把参数合并到一行、重排 include，直接跑会产生大面积无关
+# diff。动手前先看 DEVELOPMENT.md 的「代码约定」，别整文件格式化。
 BasedOnStyle: LLVM
 AccessModifierOffset: -4
 AlignAfterOpenBracket: BlockIndent
