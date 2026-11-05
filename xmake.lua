@@ -17,8 +17,7 @@ end
 
 target("InventoryBackup")
     add_rules("@levibuildscript/linkrule")
-    -- 版本号不写死：modpacker 会用 `git describe --tags --abbrev=0 --always` 取当前 tag（发布前打 v26.60.0）
-    add_rules("@levibuildscript/modpacker")
+    -- 版本号只有一个来源：tooth.json（on_load 里读）加 git 短 hash；modpacker 与 Version.h 都吃这一份
     if is_plat("windows") then
         add_defines("NOMINMAX", "UNICODE", "_HAS_CXX23=1")
         set_exceptions("none") -- To avoid conflicts with /EHa.
@@ -45,7 +44,31 @@ target("InventoryBackup")
     set_symbols("debug")
     add_headerfiles("src/**.h")
     add_files("src/**.cpp")
-    add_includedirs("src")
+    add_files("src/mod/InventoryBackup.rc")
+    set_configdir("$(builddir)/config")
+    add_configfiles("src/(mod/Version.h.in)")
+    add_includedirs("src", "$(builddir)/config")
+
+    -- tooth.json 是版本号的唯一来源；带 +<短 hash> 方便定位到具体提交
+    on_load(function (target)
+        import("core.base.json")
+
+        local version = json.loadfile("tooth.json")["version"]
+        if type(version) ~= "string" or not version:match("^%d+%.%d+%.%d+$") then
+            raise("tooth.json version must use major.minor.patch format")
+        end
+
+        local major, minor, patch = version:match("^(%d+)%.(%d+)%.(%d+)$")
+        local hash = os.iorun("git rev-parse --short HEAD"):gsub("\n", "")
+        local versionString = version .. "+" .. hash
+
+        target:set("version", version)
+        target:set("configvar", "IB_VERSION_MAJOR", major)
+        target:set("configvar", "IB_VERSION_MINOR", minor)
+        target:set("configvar", "IB_VERSION_PATCH", patch)
+        target:set("configvar", "IB_VERSION_STRING", versionString)
+        target:add("rules", "@levibuildscript/modpacker", {modVersion = versionString})
+    end)
 
     -- modpacker 只搬 dll / pdb / manifest，语言文件得自己拷进产物目录
     after_build(function (target)

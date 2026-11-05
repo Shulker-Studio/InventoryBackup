@@ -1,0 +1,33 @@
+#include "mod/Version.h"
+#include "winres.h"
+
+#pragma code_page(65001)
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION IB_VERSION_MAJOR, IB_VERSION_MINOR, IB_VERSION_PATCH, 0
+    PRODUCTVERSION IB_VERSION_MAJOR, IB_VERSION_MINOR, IB_VERSION_PATCH, 0
+    FILEFLAGSMASK 0x3fL
+    FILEFLAGS 0x0L
+    FILEOS 0x40004L
+    FILETYPE 0x2L
+    FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "Shulker Studio"
+            VALUE "FileDescription", "Player inventory backup and rollback mod for LeviLamina"
+            VALUE "FileVersion", IB_VERSION_STRING
+            VALUE "InternalName", "InventoryBackup.dll"
+            VALUE "LegalCopyright", "Copyright (c) 2026 Shulker Studio"
+            VALUE "OriginalFilename", "InventoryBackup.dll"
+            VALUE "ProductName", "InventoryBackup"
+            VALUE "ProductVersion", IB_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
