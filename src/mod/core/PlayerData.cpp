@@ -100,6 +100,7 @@ std::optional<std::string> dataKeyOf(std::string const& uuid) {
     }
 
     // 2) 在线玩家直接问 BDS（首次进服还没落盘时也能拿到正确键）
+    //    LeviLamina 26.60.0 曾把 getServerId 标成 MCNAPI（链接失败），26.60.1 已恢复 MCAPI
     if (auto* player = onlinePlayer(uuid); player != nullptr) {
         auto sid = store->getServerId(*player, /*isXboxLive=*/true);
         if (!sid.empty()) {

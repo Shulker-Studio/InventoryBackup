@@ -1,13 +1,13 @@
 # InventoryBackup
 
-LeviLamina 服务端模组：玩家背包备份与回档。当前版本 `26.51.1`，适配 LeviLamina 26.51.9。版本号由构建时的 git tag 决定（`v26.51.1` → `26.51.1`），跟 LeviLamina 版本对齐；改动见 [CHANGELOG.md](CHANGELOG.md)。
+LeviLamina 服务端模组：玩家背包备份与回档。当前版本 `26.60.0`，适配 LeviLamina `>=26.60.1 <26.70.0`（Minecraft 26.60.6 服务端）。版本号由构建时的 git tag 决定（`v26.60.0` → `26.60.0`），跟 LeviLamina 版本对齐；改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 功能对齐 `WnBagBackup`（LSE 脚本版），但不依赖 GMLIB / LegacyRemoteCall —— 离线玩家背包直接读写 **BDS 世界库（LevelDB）** 里的玩家数据，用的是原版自己的键（已用真实世界库核查，见 `tools/verify_player_key_scheme.py`）：
 
 - `player_<uuid>`：映射记录，值是一段 NBT —— `{ MsaId, SelfSignedId, ServerId }`
 - `player_server_<id>`：玩家实体 NBT，`ServerId` 标签的值就是这个完整键名；`Inventory` / `Armor` / `Offhand` / `EnderChestInventory` 都在这里
 
-所以数据键不是自己拼出来的，而是从映射记录的 `ServerId` 里取；在线玩家则直接问 `LevelStorage::getServerId()`。
+所以数据键不是自己拼出来的，而是从映射记录的 `ServerId` 里取，这是首选且权威的来源；找不到映射记录时还会兼容探测历史世界的 `player_server_<uuid>` 键，在线玩家则直接问 `LevelStorage::getServerId()`（要求 LeviLamina ≥ 26.60.1：该符号在 26.60.0 被标成 `MCNAPI`，26.60.1 已恢复导出）。
 
 ## 功能
 
@@ -92,7 +92,7 @@ xmake
 
 产物在 `bin/InventoryBackup/`。
 
-安装：把产物目录放进服务端的 `plugins/InventoryBackup/`。
+安装：把产物目录放进服务端的 `mods/InventoryBackup/`（26.60 起 LeviLamina 的模组根目录是 `mods/`，不再是 `plugins/`）。
 
 运行环境：服务端需要 **Microsoft Visual C++ 2015-2022 Redistributable (x64)**，建议装最新版（<https://aka.ms/vs/17/release/vc_redist.x64.exe>）。模组产物的导入表只有 `LeviLamina.dll`、`MSVCP140.dll`、`VCRUNTIME140.dll`、`VCRUNTIME140_1.dll` 和系统 UCRT —— 也就是说**只要 LeviLamina 能起来，本模组就能加载**；`26.51.0` 额外依赖的 `MSVCP140_ATOMIC_WAIT.dll`（时区库 / `std::jthread`）已在 `26.51.1` 去掉。
 

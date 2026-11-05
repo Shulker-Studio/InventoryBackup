@@ -4,7 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-版本号与所适配的 LeviLamina 对齐（`26.51.x`），当前 `26.51.1` 适配 LeviLamina 26.51.9。
+版本号与所适配的 LeviLamina 对齐（`26.60.x`），当前 `26.60.0` 适配 LeviLamina `>=26.60.1 <26.70.0`（Minecraft 26.60.6 服务端）。
+
+## [26.60.0] - 2026-11-05
+
+适配 LeviLamina 26.60.1 与 Minecraft 26.60.6 服务端。功能与 26.51.0 一致。
+
+### Changed
+
+- 依赖升到 LeviLamina `26.60.*`，但**必须是 26.60.1 及以上**（tooth.json 里写 `>=26.60.1 <26.70.0`）：26.60.0 把 `LevelStorage::getServerId` 标成 `MCNAPI`（不导出，链接直接失败），26.60.1 已恢复 `MCAPI`（见 [mcapi-requests#284](https://github.com/LiteLDev/mcapi-requests/issues/284)）
+- **安装位置改为 `mods/`**：26.60 起 LeviLamina 的模组根目录从 `plugins/` 换成 `mods/`，`tooth.json` 的 `dest` 同步改成 `mods/InventoryBackup/`；老服务端升级时把 `plugins/InventoryBackup/` 整个目录挪到 `mods/` 下即可（`config/`、`data/` 都是相对模组目录找的，不用改）
+
+### Fixed
+
+- 修复部分服务端（vcredist 偏旧）启用时报 `std::system_error` / `[0x0000007E:system]` 无法加载的问题：时区改用 CRT 的 `localtime_s`，定时线程改用 `std::thread` + `std::atomic<bool>`，产物不再依赖 `MSVCP140_ATOMIC_WAIT.dll`，只要 LeviLamina 能启动就能加载（同步自 26.51.1）
 
 ## [26.51.1] - 2026-11-05
 

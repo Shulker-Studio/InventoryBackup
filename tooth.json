@@ -2,7 +2,7 @@
   "format_version": 3,
   "format_uuid": "289f771f-2c9a-4d73-9f3f-8492495a924d",
   "tooth": "github.com/Shulker-Studio/InventoryBackup",
-  "version": "26.51.1",
+  "version": "26.60.0",
   "info": {
     "name": "InventoryBackup",
     "description": "玩家背包备份与回档：定时/退出/死亡自动备份、按天归档、在线与离线玩家查包回档、暂存与导入导出",
@@ -16,7 +16,7 @@
       "label": "",
       "platform": "win-x64",
       "dependencies": {
-        "github.com/LiteLDev/LeviLamina": ">=26.51.0 <26.60.0"
+        "github.com/LiteLDev/LeviLamina": ">=26.60.1 <26.70.0"
       },
       "assets": [
         {
@@ -28,7 +28,7 @@
             {
               "type": "dir",
               "src": "InventoryBackup/",
-              "dest": "plugins/InventoryBackup/"
+              "dest": "mods/InventoryBackup/"
             }
           ]
         }

@@ -3,7 +3,8 @@ add_rules("mode.debug", "mode.release")
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
 
 -- 背包备份是纯服务端模组
-add_requires("levilamina 26.51.9", {configs = {target_type = "server"}})
+-- 26.60.1 起 LevelStorage::getServerId 恢复为 MCAPI，26.60.0 会链接失败，所以下限卡 26.60.1
+add_requires("levilamina >=26.60.1 <26.70.0", {configs = {target_type = "server"}})
 add_requires("levibuildscript")
 -- 索引 / 暂存 / 导入导出都是 JSON
 add_requires("nlohmann_json 3.12.0")
@@ -16,7 +17,7 @@ end
 
 target("InventoryBackup")
     add_rules("@levibuildscript/linkrule")
-    -- 版本号不写死：modpacker 会用 `git describe --tags --abbrev=0 --always` 取当前 tag（发布前打 v26.51.0）
+    -- 版本号不写死：modpacker 会用 `git describe --tags --abbrev=0 --always` 取当前 tag（发布前打 v26.60.0）
     add_rules("@levibuildscript/modpacker")
     if is_plat("windows") then
         add_defines("NOMINMAX", "UNICODE", "_HAS_CXX23=1")
