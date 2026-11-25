@@ -4,11 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，写法约定见 [DEVELOPMENT.md](DEVELOPMENT.md#更新日志)。
 
-版本号与所适配的 LeviLamina 对齐（`26.60.x`），当前发布版 `26.60.0` 适配 LeviLamina `>=26.60.1 <26.70.0`（Minecraft 26.60.6 服务端）。
+版本号与所适配的 LeviLamina 对齐（`26.60.x`），本次发布 `26.60.1` 适配 LeviLamina `26.60.*`（Minecraft 26.60.6 服务端）。
 
 ## [Unreleased]
 
-目标版本 `26.60.1`：备份、清理、导入导出改为分片 + 后台执行，并修掉玩家列表在老存档上失效的问题。
+## [26.60.1] - 2026-11-25
+
+### Changed
+
+- 发布元数据从 `tooth.json` 迁移至 `lip.toml`，依赖范围采用 `26.60.*`，并以 `backup`、`management` 标签归入服务器管理类；打包后的 `manifest.json` 版本号包含发布版本、短提交哈希和 UTC 构建时间。
 
 ### Added
 
@@ -85,7 +89,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0
 - 与旧 JS 插件的导出格式不兼容（旧插件是单个 `data/export_bagdata.json` + base64），LevelDB 存储也不做迁移，新插件从空历史开始
 - 离线玩家的血量 / 位置 / 经验等状态虽然能从同一份实体 NBT 读到，但目前没有对外界面
 
-[Unreleased]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.60.0...HEAD
+[Unreleased]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.60.1...HEAD
+[26.60.1]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.60.0...v26.60.1
 [26.60.0]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.51.0...v26.60.0
 [26.51.1]: https://github.com/Shulker-Studio/InventoryBackup/compare/v26.51.0...v26.51.1
 [26.51.0]: https://github.com/Shulker-Studio/InventoryBackup/releases/tag/v26.51.0

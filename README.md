@@ -1,6 +1,6 @@
 # InventoryBackup
 
-LeviLamina 服务端模组：玩家背包备份与回档。当前版本 `26.60.0`，适配 LeviLamina `>=26.60.1 <26.70.0`（Minecraft 26.60.6 服务端）。
+LeviLamina 服务端模组：玩家背包备份与回档。当前版本 `26.60.1`，适配 LeviLamina `26.60.*`（Minecraft 26.60.6 服务端）。
 
 离线玩家也能备份和回档，不需要本人上线。备份的是背包四件套（背包 / 盔甲 / 副手 / 末影箱），不含经验、血量、坐标、成就等其它数据。
 
@@ -161,7 +161,7 @@ xmake f -y -p windows -a x64 -m release
 xmake
 ```
 
-产物在 `bin/InventoryBackup/`，版本号取自 `tooth.json`。
+产物在 `bin/InventoryBackup/`，版本号取自 `lip.toml`。
 
 开发相关的实现说明（世界库键格式、线程模型、版本号生成、源码目录）见 [DEVELOPMENT.md](DEVELOPMENT.md)，改动历史见 [CHANGELOG.md](CHANGELOG.md)。
 

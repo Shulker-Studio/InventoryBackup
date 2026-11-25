@@ -17,7 +17,7 @@ end
 
 target("InventoryBackup")
     add_rules("@levibuildscript/linkrule")
-    -- 版本号只有一个来源：tooth.json（on_load 里读）加 git 短 hash；modpacker 与 Version.h 都吃这一份
+    -- 版本号只有一个来源：lip.toml（on_load 里读）加 git 短 hash；modpacker 与 Version.h 都吃这一份
     if is_plat("windows") then
         add_defines("NOMINMAX", "UNICODE", "_HAS_CXX23=1")
         set_exceptions("none") -- To avoid conflicts with /EHa.
@@ -49,25 +49,25 @@ target("InventoryBackup")
     add_configfiles("src/(mod/Version.h.in)")
     add_includedirs("src", "$(builddir)/config")
 
-    -- tooth.json 是版本号的唯一来源；带 +<短 hash> 方便定位到具体提交
+    -- lip.toml 是版本号的唯一来源；资源版本带 +<短 hash>，manifest 额外带 UTC 构建时间
     on_load(function (target)
-        import("core.base.json")
-
-        local version = json.loadfile("tooth.json")["version"]
-        if type(version) ~= "string" or not version:match("^%d+%.%d+%.%d+$") then
-            raise("tooth.json version must use major.minor.patch format")
+        local lipToml = io.readfile("lip.toml")
+        local version = lipToml:match("\nversion%s*=%s*\"([^\"]+)\"")
+        if not version or not version:match("^%d+%.%d+%.%d+$") then
+            raise("lip.toml version must use major.minor.patch format")
         end
 
         local major, minor, patch = version:match("^(%d+)%.(%d+)%.(%d+)$")
         local hash = os.iorun("git rev-parse --short HEAD"):gsub("\n", "")
         local versionString = version .. "+" .. hash
+        local manifestVersion = versionString .. "." .. os.date("!%Y%m%dT%H%M%SZ")
 
         target:set("version", version)
         target:set("configvar", "IB_VERSION_MAJOR", major)
         target:set("configvar", "IB_VERSION_MINOR", minor)
         target:set("configvar", "IB_VERSION_PATCH", patch)
         target:set("configvar", "IB_VERSION_STRING", versionString)
-        target:add("rules", "@levibuildscript/modpacker", {modVersion = versionString})
+        target:add("rules", "@levibuildscript/modpacker", {modVersion = manifestVersion})
     end)
 
     -- modpacker 只搬 dll / pdb / manifest，语言文件得自己拷进产物目录

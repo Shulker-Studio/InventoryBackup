@@ -1,7 +1,7 @@
 #pragma once
 
-// 由 xmake 从 tooth.json 生成，不要手改；
-// 改版本号请编辑 tooth.json 的 version，再重新构建
+// 由 xmake 从 lip.toml 生成，不要手改；
+// 改版本号请编辑 lip.toml 的 version，再重新构建
 #define IB_VERSION_MAJOR ${IB_VERSION_MAJOR}
 #define IB_VERSION_MINOR ${IB_VERSION_MINOR}
 #define IB_VERSION_PATCH ${IB_VERSION_PATCH}

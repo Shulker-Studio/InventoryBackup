@@ -76,7 +76,7 @@ jobs:
       - run: |
           cp CHANGELOG.md LICENSE README.md artifact/
 
-      # 产物名必须和 tooth.json 里声明的 asset 文件名一致，否则 lip 安装时会 404
+      # 产物名必须和 lip.toml 里声明的 asset 文件名一致，否则 lip 安装时会 404
       - run: |
           zip -r ../${{ github.event.repository.name }}-server-windows-x64.zip *
         working-directory: artifact

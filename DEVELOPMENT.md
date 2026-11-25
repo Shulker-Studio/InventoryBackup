@@ -27,7 +27,7 @@ src/mod/
   form/StagedForms.cpp       暂存 / 外部背包 / 导入导出
 ```
 
-仓库根目录：`xmake.lua`（构建脚本）、`tooth.json`（版本与打包信息）、`lang/`（翻译）、`CHANGELOG.md`。
+仓库根目录：`xmake.lua`（构建脚本）、`lip.toml`（版本与打包信息）、`lang/`（翻译）、`CHANGELOG.md`。
 
 ## 世界库键格式
 
@@ -48,7 +48,7 @@ src/mod/
 
 - **`forEachKeyWithPrefix` 回调里拿到的键已经剥掉了匹配到的前缀**。以 `player_` 为前缀枚举时，映射键是 `<uuid>`、数据键是 `server_<id>`。早期版本在回调里又检查了一次 `player_` 前缀，导致一条键都认不出来、`storedUuids()` 恒返回空（旧存档上表现为「所有玩家只显示 2 个」）。现在两种形态都认，扫到键却一条都认不出来会告警
 - **同一个账号可能有多条映射**：离线 uuid 和 Xbox uuid 各一条，指向同一个 `player_server_<id>`。`allPlayers()` 按数据键去重、优先保留有名字的那条 uuid（真实存档 1876 条映射去重后 952 人）
-- `LevelStorage::loadAllPlayerIDs` / `createWriteBatch` 在 LeviLamina 26.60 是 `MCNAPI`（不导出），用不了；`getServerId` 在 26.60.0 被标成 `MCNAPI`、26.60.1 才恢复 `MCAPI`，所以 `tooth.json` 卡 `>=26.60.1`
+- `LevelStorage::loadAllPlayerIDs` / `createWriteBatch` 在 LeviLamina 26.60 是 `MCNAPI`（不导出），用不了；`getServerId` 在 26.60.0 被标成 `MCNAPI`、26.60.1 才恢复 `MCAPI`。`lip.toml` 的发布元数据使用 `26.60.*`，但 `xmake.lua` 为避免解析到不兼容的 26.60.0，仍将构建下限限定为 `>=26.60.1 <26.70.0`
 
 ## 线程模型
 
@@ -68,7 +68,7 @@ src/mod/
 
 ## 版本号
 
-版本号只写一次：`tooth.json` 的 `version`。`xmake.lua` 的 `on_load` 读它、校验 `x.y.z` 格式、拼上 `git rev-parse --short HEAD` 作为构建元数据（`26.60.0+9446ed8`），再注入 `mod/Version.h`（由 `Version.h.in` 生成）、`mod/InventoryBackup.rc` 的版本资源，并传给 `modpacker` 写进 `manifest.json`。
+版本号只写一次：`lip.toml` 的 `version`。`xmake.lua` 的 `on_load` 读它、校验 `x.y.z` 格式、拼上 `git rev-parse --short HEAD` 作为资源版本元数据（`26.60.1+<hash>`），再注入 `mod/Version.h`（由 `Version.h.in` 生成）、`mod/InventoryBackup.rc` 的版本资源；传给 `modpacker` 的 `manifest.json` 版本额外追加 UTC 构建时间。
 
 ## 多语言
 
@@ -87,10 +87,10 @@ src/mod/
 2. **只写"服主能感知的差异"**：一条一句、不换行、尽量 80 字以内。函数名、DB 键名、线程与存储细节属于这里（DEVELOPMENT.md）或提交信息，不进 CHANGELOG
 3. **同一节里同一条改动只写一次**。并行的发布线（`26.51.x` 与 `26.60.x`）各自都要包含这条修复时，两边都写并注明「同步自 x.y.z」
 4. **纯内部整理不写日志**：拆文件、改注释、加日志、补校验都不写；重构只有带来可感知的结果（如"界面支持英文了"）才写
-5. **发布时一起做**：`tooth.json` 升版本 → `[Unreleased]` 改名并填日期 → `xmake` 确认产物版本号 → 打 tag
+5. **发布时一起做**：`lip.toml` 升版本 → `[Unreleased]` 改名并填日期 → `xmake` 确认产物版本号 → 打 tag
 6. **文末维护版本链接块**（Keep a Changelog 的要求）：最早一个版本指向 `releases/tag/<tag>`，之后的版本用 `compare/<上一版>...<本版>`，`[Unreleased]` 指向 `compare/<最新 tag>...HEAD`。发布时把 `[Unreleased]` 的基线改成本次 tag
 
-**发版待办**：下一版定为 `26.60.1`。`tooth.json` 现在还是 `26.60.0`（对应已发布的 v26.60.0），发版时一起做四件事：把它升到 `26.60.1`、把 README 的「当前版本」同步、把 `[Unreleased]` 改名为 `## [26.60.1] - 日期`、重建确认产物版本后打 tag。在那之前不要用当前 `tooth.json` 构建对外发布的包。
+**发版待办**：在 `lip.toml` 升版本、把 `[Unreleased]` 改名并填日期后，重建确认产物版本号，再打对应的 `v<version>` tag。
 
 ## 代码约定
 
